@@ -1,5 +1,7 @@
 import { MemoriaRAM } from "./RAM.js";
 
+type Escalonador = "fcfs" | "sjf" | "rr";
+
 export type BurstCPU = {
     cpu: number;
     refs: number[];
@@ -118,6 +120,12 @@ class CPU {
     public disponivel = true;
     public processoAtual: Processo | null = null;
 
+    // Troca de contexto
+    public ultimoPid: number | null = null;
+    public trocaRestante = 0;
+    public totalTrocas = 0;
+    public quantumUsado = 0;
+
     executarUnidade(): boolean {
         if (!this.processoAtual) return false;
 
@@ -132,7 +140,7 @@ class CPU {
 
 class SO {
     private time: number = 0;
-    private cpus: any = [];
+    private cpus: CPU[] = [];
     private fila_prontos: Processo[] = []; // prontos
     private ram = new MemoriaRAM(256, "fifo");
     private totalPageFaults = 0;
@@ -142,7 +150,16 @@ class SO {
         retorno: number; // tempo de retorno do bloqueio
     }[] = [];
 
-    constructor(num_cpus: number) {
+    constructor(
+        num_cpus: number,
+        private custoTroca: number = 1,
+        private escalonador: Escalonador = "sjf",
+        private quantum: number = 2
+    ) {
+        if (this.escalonador === "rr" && this.quantum <= 0) {
+            throw new Error("O quantum deve ser maior que zero");
+        }
+
         for (let i = 0; i < num_cpus; i++) {
             this.cpus.push(new CPU());
         }
@@ -172,14 +189,47 @@ class SO {
                 this.fila_prontos.push(p);
             }
 
-            // 3. Ordenar fila de prontos
-            this.fila_prontos = this.SJF();
+            // 3. Escolher escalonador
+
+            if (this.escalonador === "sjf") {
+                this.fila_prontos = this.SJF();
+            }
+
+            // FCFS e RR mantêm a ordem da fila
+
+            // Verificar preempções do Round Robin
+            if (this.escalonador === "rr") {
+                for (const cpu of this.cpus) {
+
+                    if (!cpu.processoAtual) continue;
+                    if (cpu.quantumUsado < this.quantum) continue;
+
+                    if (this.fila_prontos.length > 0) {
+                        const p = cpu.processoAtual;
+
+                        p.estado = "pronto";
+                        this.fila_prontos.push(p);
+
+                        cpu.processoAtual = null;
+                        cpu.disponivel = true;
+                        cpu.quantumUsado = 0;
+
+                        console.log(
+                            `[t=${this.time}] P${p.pid} sofreu preempção`
+                        );
+
+                    } else {
+                        // Ninguém esperando: continua com novo quantum
+                        cpu.quantumUsado = 0;
+                    }
+                }
+            }
 
             // CPUs que terminaram um burst neste instante
             const burstsConcluidos: CPU[] = [];
 
             // 4. Executar CPUs
-            for (const cpu of this.cpus) {
+            for (const [indiceCPU, cpu] of this.cpus.entries()) {
 
                 while (true) {
 
@@ -191,6 +241,30 @@ class SO {
                         cpu.processoAtual = p;
                         cpu.disponivel = false;
                         p.estado = "executando";
+                        cpu.quantumUsado = 0;
+
+                        // Verificar se precisa de troca de contexto
+                        if (cpu.ultimoPid !== p.pid) {
+                            cpu.trocaRestante = this.custoTroca;
+
+                            if (this.custoTroca > 0) {
+                                cpu.totalTrocas++;
+                            }
+                        }
+
+                        cpu.ultimoPid = p.pid;
+                    }
+
+                    // Executar a troca de contexto, se necessária
+                    if (cpu.trocaRestante > 0) {
+                        cpu.trocaRestante--;
+
+                        console.log(
+                            `[t=${this.time}] CPU ${indiceCPU}: TROCA para P${cpu.processoAtual!.pid}`
+                        );
+
+                        // Consome esta unidade de tempo sem executar o processo
+                        break;
                     }
 
                     const p = cpu.processoAtual!;
@@ -224,7 +298,7 @@ class SO {
 
                         cpu.processoAtual = null;
                         cpu.disponivel = true;
-
+                        cpu.quantumUsado = 0;
                         // Tentar outro processo na mesma CPU
                         continue;
                     }
@@ -233,6 +307,13 @@ class SO {
 
                     // 6. Executar uma unidade de CPU
                     const terminouBurst = cpu.executarUnidade();
+                    if (this.escalonador === "rr") {
+                        cpu.quantumUsado++;
+                    }
+
+                    console.log(
+                        `[t=${this.time}] CPU ${indiceCPU}: P${p.pid} executou página ${pagina}`
+                    );
 
                     if (terminouBurst) {
                         burstsConcluidos.push(cpu);
@@ -283,6 +364,7 @@ class SO {
 
                 cpu.processoAtual = null;
                 cpu.disponivel = true;
+                cpu.quantumUsado = 0;
             }
 
             // 8. Avançar o relógio
@@ -306,8 +388,19 @@ class SO {
     }
 }
 
+//const so = new SO(1, 1, "rr", 2); // 1 CPU, custo de troca 1, Round Robin e quantum 2.
 
-const so = new SO(1);
+// FCFS
+const so = new SO(1, 1, "fcfs");
+
+// SJF
+//const so = new SO(1, 1, "sjf");
+
+// Round Robin com quantum 2
+//const so = new SO(1, 1, "rr", 2);
+
+// Round Robin com quantum 10
+//const so = new SO(4, 1, "rr", 10);
 so.execute();
 
 //so.SJF();
