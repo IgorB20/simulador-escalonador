@@ -46,11 +46,10 @@ npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --
 
 O projeto também disponibiliza um executável para Windows 64 bits, permitindo executar o simulador sem precisar instalar Node.js ou qualquer dependência.
 
-1. Baixe os arquivos do executável disponibilizados no repositório.
-2. Extraia os arquivos para uma pasta no computador.
-3. Certifique-se de que os arquivos `simulador.exe`, `cenario_A_t0.json` e `cenario_B_espacadas.json` estejam na mesma pasta.
-4. Abra essa pasta no Explorador de Arquivos, digite `powershell` na barra de endereço e pressione **Enter**.
-5. Execute um dos comandos abaixo.
+1. Baixe o arquivo `simulador.exe`, `cenario_A_t0.json` e `cenario_B_espacadas.json` disponibilizados [aqui](https://github.com/IgorB20/simulador-escalonador/releases/tag/1.0.0)
+2. Certifique-se de que os arquivos `simulador.exe`, `cenario_A_t0.json` e `cenario_B_espacadas.json` estejam na mesma pasta.
+3. Abra essa pasta no Explorador de Arquivos, digite `powershell` na barra de endereço e pressione **Enter**.
+4. Execute um dos comandos abaixo.
 
 ### Exemplo com 1 CPU, FCFS e FIFO
 
