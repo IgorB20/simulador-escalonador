@@ -1,4 +1,6 @@
 import { MemoriaRAM } from "./RAM.js";
+import { readFileSync, mkdirSync, writeFileSync, openSync, writeSync, closeSync } from "node:fs";
+import { join, parse } from "node:path";
 
 type Escalonador = "fcfs" | "sjf" | "rr";
 
@@ -31,80 +33,13 @@ export type Processo = {
     burstAtual?: number;
     executado?: number;
     faultPendente?: boolean;
+
+    // Métricas
+    entrouProntosEm?: number;
+    tempoEspera?: number;
+    primeiroDespacho?: number;
+    termino?: number;
 };
-
-// const processos: Processo[] = [
-//     {
-//         pid: 1,
-//         chegada: 0,
-//         classe: "curto",
-//         paginas: 6,
-//         bursts: [
-//             { cpu: 6, refs: [0, 1, 1, 2, 3, 0] }
-//         ]
-//     },
-//     {
-//         pid: 2,
-//         chegada: 1,
-//         classe: "curto",
-//         paginas: 6,
-//         bursts: [
-//             { cpu: 8, refs: [0, 1, 2, 2, 3, 4, 1, 0] }
-//         ]
-//     },
-//     {
-//         pid: 3,
-//         chegada: 2,
-//         classe: "curto",
-//         paginas: 6,
-//         bursts: [
-//             { cpu: 7, refs: [0, 1, 1, 2, 3, 4, 0] }
-//         ]
-//     },
-//     {
-//         pid: 4,
-//         chegada: 3,
-//         classe: "curto",
-//         paginas: 6,
-//         bursts: [
-//             { cpu: 3, refs: [0, 1, 2] }
-//         ]
-//     }
-// ];
-
-const processos: Processo[] = [
-    {
-        pid: 1,
-        chegada: 0,
-        classe: "curto",
-        paginas: 6,
-        bursts: [
-            { cpu: 3, refs: [0, 1, 1] },
-            { es: 5 },
-            { cpu: 2, refs: [2, 3] }
-        ]
-    },
-    {
-        pid: 2,
-        chegada: 1,
-        classe: "curto",
-        paginas: 6,
-        bursts: [
-            { cpu: 2, refs: [0, 0] },
-            { es: 3 },
-            { cpu: 3, refs: [1, 2, 2] }
-        ]
-    },
-    {
-        pid: 3,
-        chegada: 2,
-        classe: "curto",
-        paginas: 6,
-        bursts: [
-            { cpu: 4, refs: [0, 1, 0, 2] }
-        ]
-    }
-];
 
 function obterBurstCPU(processo: Processo): BurstCPU {
     const burst = processo.bursts[processo.burstAtual ?? 0];
@@ -117,6 +52,7 @@ function obterBurstCPU(processo: Processo): BurstCPU {
 }
 
 class CPU {
+
     public disponivel = true;
     public processoAtual: Processo | null = null;
 
@@ -125,6 +61,10 @@ class CPU {
     public trocaRestante = 0;
     public totalTrocas = 0;
     public quantumUsado = 0;
+
+    public tempoUtil = 0;
+    public tempoTroca = 0;
+    public tempoOcioso = 0;
 
     executarUnidade(): boolean {
         if (!this.processoAtual) return false;
@@ -139,26 +79,40 @@ class CPU {
 }
 
 class SO {
+    private processos: Processo[];
     private time: number = 0;
     private cpus: CPU[] = [];
     private fila_prontos: Processo[] = []; // prontos
-    private ram = new MemoriaRAM(256, "fifo");
+    private ram: MemoriaRAM;
     private totalPageFaults = 0;
+    private arquivoLog: number | null = null;
+    private gantt: string[][] = []; // Uma linha por tick, com o evento de cada CPU
+    private fault: number; // tempo de espera para page fault
 
     private fila_bloqueados: {
         processo: Processo;
         retorno: number; // tempo de retorno do bloqueio
+        motivo: "es" | "page_fault" | "sem_vitima";
     }[] = [];
 
     constructor(
         num_cpus: number,
         private custoTroca: number = 1,
         private escalonador: Escalonador = "sjf",
-        private quantum: number = 2
+        private quantum: number = 2,
+        carga: Processo[] = [],
+        quadros: number = 256,
+        substituicao: "fifo" | "lru" = "fifo",
+        fault: number = 20,
+        private log: boolean = false
     ) {
         if (this.escalonador === "rr" && this.quantum <= 0) {
             throw new Error("O quantum deve ser maior que zero");
         }
+
+        this.processos = structuredClone(carga);
+        this.ram = new MemoriaRAM(quadros, substituicao);
+        this.fault = fault;
 
         for (let i = 0; i < num_cpus; i++) {
             this.cpus.push(new CPU());
@@ -166,33 +120,64 @@ class SO {
     }
 
     execute() {
+        // "w" recria/trunca logs.txt em TODA execucao, mesmo sem --log.
+        this.arquivoLog = openSync("logs.txt", "w");
+
+        try {
+            return this.executarSimulacao();
+        } finally {
+            closeSync(this.arquivoLog);
+            this.arquivoLog = null;
+        }
+    }
+
+    private executarSimulacao() {
         let terminados = 0;
+        this.registrar("INICIO DA SIMULACAO");
 
-        while (terminados < processos.length) {
-
+        while (terminados < this.processos.length) {
+            const cpusAtivasNesteTick = new Set<CPU>();
+            const eventosTick: string[] = Array(this.cpus.length).fill("OCIOSA");
             // 1. Verificar chegadas
-            const chegadas = processos.filter(
+            const chegadas = this.processos.filter(
                 p => p.chegada === this.time
             );
 
-            // 2. Verificar retornos de E/S e page fault
-            const retornos = this.fila_bloqueados
-                .filter(b => b.retorno === this.time)
-                .map(b => b.processo);
+            // 2. Verificar retornos de E/S e page fault.
+            // Tratar chegadas e retornos por PID preserva a ordem original.
+            const retornos = this.fila_bloqueados.filter(b => b.retorno === this.time);
+            const eventos = [
+                ...chegadas.map(p => ({ processo: p, tipo: "chegada" as const })),
+                ...retornos.map(b => ({ processo: b.processo, tipo: "retorno" as const, bloqueio: b }))
+            ].sort((a, b) => a.processo.pid - b.processo.pid);
 
-            this.fila_bloqueados = this.fila_bloqueados.filter(
-                b => b.retorno > this.time
-            );
+            for (const evento of eventos) {
+                const p = evento.processo;
 
-            for (const p of [...chegadas, ...retornos].sort((a, b) => a.pid - b.pid)) {
+                if (evento.tipo === "retorno") {
+                    // Remover apenas este bloqueio antes de registrar o estado.
+                    this.fila_bloqueados.splice(this.fila_bloqueados.indexOf(evento.bloqueio), 1);
+                }
+
                 p.estado = "pronto";
+                p.entrouProntosEm = this.time;
                 this.fila_prontos.push(p);
+
+                const descricao = evento.tipo === "chegada"
+                    ? "CHEGADA"
+                    : evento.bloqueio.motivo === "es"
+                        ? "RETORNO DE E/S"
+                        : `RETORNO DE ${evento.bloqueio.motivo.toUpperCase()}`;
+                this.registrar(descricao, p.pid);
             }
 
             // 3. Escolher escalonador
-
             if (this.escalonador === "sjf") {
+                const ordemAnterior = this.fila_prontos.map(p => p.pid).join(",");
                 this.fila_prontos = this.SJF();
+                if (ordemAnterior !== this.fila_prontos.map(p => p.pid).join(",")) {
+                    this.registrar("ORDENACAO DA FILA PELO SJF");
+                }
             }
 
             // FCFS e RR mantêm a ordem da fila
@@ -208,15 +193,15 @@ class SO {
                         const p = cpu.processoAtual;
 
                         p.estado = "pronto";
+                        p.entrouProntosEm = this.time;
+
                         this.fila_prontos.push(p);
 
                         cpu.processoAtual = null;
                         cpu.disponivel = true;
                         cpu.quantumUsado = 0;
 
-                        console.log(
-                            `[t=${this.time}] P${p.pid} sofreu preempção`
-                        );
+                        this.registrar("PREEMPCAO POR QUANTUM", p.pid);
 
                     } else {
                         // Ninguém esperando: continua com novo quantum
@@ -243,6 +228,15 @@ class SO {
                         p.estado = "executando";
                         cpu.quantumUsado = 0;
 
+                        // Somar o tempo que ficou esperando na fila
+                        p.tempoEspera = (p.tempoEspera ?? 0)
+                            + (this.time - (p.entrouProntosEm ?? this.time));
+
+                        // Registrar a primeira vez que recebeu uma CPU
+                        if (p.primeiroDespacho === undefined) {
+                            p.primeiroDespacho = this.time;
+                        }
+
                         // Verificar se precisa de troca de contexto
                         if (cpu.ultimoPid !== p.pid) {
                             cpu.trocaRestante = this.custoTroca;
@@ -253,16 +247,18 @@ class SO {
                         }
 
                         cpu.ultimoPid = p.pid;
+                        this.registrar(`DESPACHO NA CPU ${indiceCPU}`, p.pid);
                     }
 
                     // Executar a troca de contexto, se necessária
                     if (cpu.trocaRestante > 0) {
                         cpu.trocaRestante--;
 
-                        console.log(
-                            `[t=${this.time}] CPU ${indiceCPU}: TROCA para P${cpu.processoAtual!.pid}`
-                        );
+                        cpu.tempoTroca++;
+                        cpusAtivasNesteTick.add(cpu);
+                        eventosTick[indiceCPU] = "TROCA";
 
+                        // O despacho ja ficou registrado com o estado da troca.
                         // Consome esta unidade de tempo sem executar o processo
                         break;
                     }
@@ -291,14 +287,17 @@ class SO {
 
                         this.fila_bloqueados.push({
                             processo: p,
-                            retorno: this.time + 20
+                            retorno: this.time + this.fault,
+                            motivo: resultado === "sem_vitima" ? "sem_vitima" : "page_fault"
                         });
-
-                        console.log(`[t=${this.time}] P${p.pid}: ${resultado}`);
 
                         cpu.processoAtual = null;
                         cpu.disponivel = true;
                         cpu.quantumUsado = 0;
+                        this.registrar(
+                            `${resultado === "sem_vitima" ? "SEM VITIMA" : "PAGE FAULT"} NA PAGINA ${pagina} (CPU ${indiceCPU}; RETORNO EM t=${this.time + this.fault})`,
+                            p.pid
+                        );
                         // Tentar outro processo na mesma CPU
                         continue;
                     }
@@ -307,14 +306,16 @@ class SO {
 
                     // 6. Executar uma unidade de CPU
                     const terminouBurst = cpu.executarUnidade();
+                    cpu.tempoUtil++;
+                    cpusAtivasNesteTick.add(cpu);
+                    eventosTick[indiceCPU] = `P${p.pid}`;
+
                     if (this.escalonador === "rr") {
                         cpu.quantumUsado++;
                     }
 
-                    console.log(
-                        `[t=${this.time}] CPU ${indiceCPU}: P${p.pid} executou página ${pagina}`
-                    );
-
+                    // Execucao regular nao altera o estado do processo.
+                    // Registramos o fim do burst na etapa 7, sem gerar um log por tick.
                     if (terminouBurst) {
                         burstsConcluidos.push(cpu);
                     }
@@ -323,49 +324,54 @@ class SO {
                 }
             }
 
-            // 7. Tratar bursts concluídos no fim da unidade
+            // 7. Tratar bursts concluidos no fim da unidade
             for (const cpu of burstsConcluidos) {
                 const p = cpu.processoAtual!;
+                const indiceCPU = this.cpus.indexOf(cpu);
+                const instante = this.time + 1;
                 const indiceAtual = p.burstAtual ?? 0;
                 const proximo = p.bursts[indiceAtual + 1];
 
+                // O burst de CPU terminou, mas a transicao de estado ainda sera feita.
+                this.registrar(`FIM DE BURST DE CPU NA CPU ${indiceCPU}`, p.pid, instante);
+
                 if (proximo && "es" in proximo) {
-
-                    // Existe E/S após o burst de CPU
-                    const retorno = this.time + 1 + proximo.es;
-
+                    const retorno = instante + proximo.es;
                     p.estado = "bloqueado";
                     p.burstAtual = indiceAtual + 2;
                     p.executado = 0;
+                    this.fila_bloqueados.push({ processo: p, retorno, motivo: "es" });
 
-                    this.fila_bloqueados.push({
-                        processo: p,
-                        retorno
-                    });
+                    cpu.processoAtual = null;
+                    cpu.disponivel = true;
+                    cpu.quantumUsado = 0;
 
-                    console.log(
-                        `[t=${this.time + 1}] P${p.pid} iniciou E/S. Retorno em t=${retorno}`
-                    );
+                    this.registrar(`INICIO DE E/S (RETORNO EM t=${retorno})`, p.pid, instante);
 
                 } else if (!proximo) {
-
-                    // Não existem mais bursts: processo terminou
                     p.estado = "terminado";
-
+                    p.termino = instante;
                     this.ram.liberar(p.pid);
                     terminados++;
 
-                    console.log(
-                        `[t=${this.time + 1}] P${p.pid} terminou`
-                    );
+                    cpu.processoAtual = null;
+                    cpu.disponivel = true;
+                    cpu.quantumUsado = 0;
+
+                    this.registrar("TERMINO DO PROCESSO", p.pid, instante);
                 } else {
                     throw new Error(`Sequência de bursts inválida em P${p.pid}`);
                 }
-
-                cpu.processoAtual = null;
-                cpu.disponivel = true;
-                cpu.quantumUsado = 0;
             }
+
+            for (const cpu of this.cpus) {
+                if (!cpusAtivasNesteTick.has(cpu)) {
+                    cpu.tempoOcioso++;
+                }
+            }
+
+            // Guardar apenas a janela 0-200 para o Gantt.
+            if (this.time < 200) this.gantt.push(eventosTick);
 
             // 8. Avançar o relógio
             this.time++;
@@ -373,6 +379,79 @@ class SO {
 
         console.log(`Tempo total: ${this.time}`);
         console.log(`Page faults: ${this.totalPageFaults}`);
+
+        //validacao de metricas
+        for (const cpu of this.cpus) {
+            const total = cpu.tempoUtil
+                + cpu.tempoTroca
+                + cpu.tempoOcioso;
+
+            if (total !== this.time) {
+                throw new Error("Contabilização de tempo da CPU incorreta");
+            }
+        }
+
+        const metricas = this.calcularMetricas();
+        this.registrar(`FIM DA SIMULACAO (MAKESPAN=${metricas.makespan}, PAGE FAULTS=${metricas.pageFaults})`);
+
+        console.log("Resumo da simulação:");
+        console.log(metricas);
+
+        console.table(metricas.cpus);
+
+        return metricas;
+    }
+
+    gerarGanttCSV(): string {
+        const linhas = ["cpu,inicio,fim,evento"];
+
+        for (let cpu = 0; cpu < this.cpus.length; cpu++) {
+            let inicio = 0;
+            let evento = this.gantt[0]?.[cpu] ?? "OCIOSA";
+
+            // Intervalos [inicio, fim). Completa com OCIOSA se a simulacao
+            // terminar antes do instante 200.
+            for (let t = 1; t <= 200; t++) {
+                const proximo = t === 200 ? null : (this.gantt[t]?.[cpu] ?? "OCIOSA");
+                if (proximo !== evento) {
+                    linhas.push(`${cpu},${inicio},${t},${evento}`);
+                    inicio = t;
+                    evento = proximo ?? "OCIOSA";
+                }
+            }
+        }
+
+        return linhas.join("\n") + "\n";
+    }
+
+    // Registra o evento e uma fotografia COMPLETA do estado logo apos a mudanca.
+    // Grava diretamente em disco para nao manter o log inteiro em memoria.
+    private registrar(evento: string, pid?: number, instante: number = this.time) {
+        if (!this.log || this.arquivoLog === null) return;
+
+        const prontos = this.fila_prontos.map(p => `P${p.pid}`).join(", ") || "vazia";
+        const bloqueados = [...this.fila_bloqueados]
+            .sort((a, b) => a.retorno - b.retorno || a.processo.pid - b.processo.pid)
+            .map(b => `P${b.processo.pid} (retorno=${b.retorno}; ${b.motivo})`)
+            .join(", ") || "nenhum";
+        const cpus = this.cpus.map((cpu, i) => {
+            if (!cpu.processoAtual) return `CPU ${i}: LIVRE`;
+            const troca = cpu.trocaRestante > 0
+                ? ` (trocando; restante=${cpu.trocaRestante})`
+                : "";
+            return `CPU ${i}: P${cpu.processoAtual.pid}${troca}`;
+        }).join(" | ");
+        const quadros = this.ram.visualizar();
+        const ocupados = quadros.filter(p => p !== null).length;
+
+        writeSync(this.arquivoLog,
+            `[t=${instante}] EVENTO: ${evento} | PID: ${pid === undefined ? "-" : `P${pid}`}\n`
+            + `  Prontos (em ordem): [${prontos}]\n`
+            + `  Bloqueados: [${bloqueados}]\n`
+            + `  ${cpus}\n`
+            + `  RAM: ${ocupados}/${quadros.length} quadros ocupados\n\n`,
+            undefined, "utf8"
+        );
     }
 
     SJF(): Processo[] {
@@ -386,45 +465,228 @@ class SO {
             return restanteA - restanteB;
         });
     }
+
+    calcularMetricas() {
+        const total = this.processos.length;
+
+        const soma = (valores: number[]) =>
+            valores.reduce((a, b) => a + b, 0);
+
+        const media = (valores: number[]) =>
+            valores.length > 0 ? soma(valores) / valores.length : 0;
+
+        // Métricas dos processos
+        const esperas = this.processos.map(
+            p => p.tempoEspera ?? 0
+        );
+
+        const respostas = this.processos.map(
+            p => p.primeiroDespacho! - p.chegada
+        );
+
+        const turnarounds = this.processos.map(
+            p => p.termino! - p.chegada
+        );
+
+        // Métricas das CPUs
+        const metricasCPUs = this.cpus.map((cpu, indice) => ({
+            cpu: indice,
+
+            tempoUtil: cpu.tempoUtil,
+            tempoTroca: cpu.tempoTroca,
+            tempoOcioso: cpu.tempoOcioso,
+
+            utilizacao: this.time > 0
+                ? ((cpu.tempoUtil + cpu.tempoTroca) / this.time) * 100
+                : 0,
+
+            percentualUtil: this.time > 0
+                ? (cpu.tempoUtil / this.time) * 100
+                : 0,
+
+            percentualTroca: this.time > 0
+                ? (cpu.tempoTroca / this.time) * 100
+                : 0,
+
+            percentualOcioso: this.time > 0
+                ? (cpu.tempoOcioso / this.time) * 100
+                : 0,
+
+            totalTrocas: cpu.totalTrocas
+        }));
+
+        const totalTrocas = soma(
+            this.cpus.map(cpu => cpu.totalTrocas)
+        );
+
+        // Cada unidade útil representa uma referência lógica à memória
+        const totalReferencias = soma(
+            this.cpus.map(cpu => cpu.tempoUtil)
+        );
+
+        return {
+            processos: total,
+
+            esperaMedia: media(esperas),
+            esperaMaxima: Math.max(0, ...esperas),
+
+            respostaMedia: media(respostas),
+            turnaroundMedio: media(turnarounds),
+
+            makespan: this.time,
+
+            totalTrocas,
+
+            pageFaults: this.totalPageFaults,
+            taxaPageFaults: totalReferencias > 0
+                ? (this.totalPageFaults / totalReferencias) * 100
+                : 0,
+
+            cpus: metricasCPUs
+        };
+    }
+
 }
 
-//const so = new SO(1, 1, "rr", 2); // 1 CPU, custo de troca 1, Round Robin e quantum 2.
+// Leitura dos argumentos de linha de comando.
+function lerArgumentos(args: string[]) {
+    const aceitos = new Set([
+        "--arquivo", "--cpus", "--sched", "--quantum", "--subst",
+        "--quadros", "--custo-troca", "--fault", "--saida"
+    ]);
+    const valores = new Map<string, string>();
+    let log = false;
 
-// FCFS
-const so = new SO(1, 1, "fcfs");
+    for (let i = 0; i < args.length; i++) {
+        const chave = args[i]!;
+        if (chave === "--log") {
+            log = true;
+            continue;
+        }
+        if (!aceitos.has(chave)) throw new Error(`Argumento desconhecido: ${chave}`);
+        const valor = args[++i];
+        if (!valor || valor.startsWith("--")) {
+            throw new Error(`Informe um valor para ${chave}`);
+        }
+        valores.set(chave, valor);
+    }
 
-// SJF
-//const so = new SO(1, 1, "sjf");
+    const arquivo = valores.get("--arquivo");
+    if (!arquivo) throw new Error("Uso: --arquivo <caminho.json> [--cpus 1|4] [--sched fcfs|sjf|rr] ...");
 
-// Round Robin com quantum 2
-//const so = new SO(1, 1, "rr", 2);
+    const inteiro = (nome: string, padrao: number, minimo: number) => {
+        const texto = valores.get(nome);
+        if (texto === undefined) return padrao;
+        const numero = Number(texto);
+        if (!Number.isInteger(numero) || numero < minimo) {
+            throw new Error(`${nome} deve ser um inteiro >= ${minimo}`);
+        }
+        return numero;
+    };
 
-// Round Robin com quantum 10
-//const so = new SO(4, 1, "rr", 10);
-so.execute();
+    const cpus = inteiro("--cpus", 1, 1);
+    if (![1, 4].includes(cpus)) throw new Error("--cpus deve ser 1 ou 4");
 
-//so.SJF();
+    const sched = valores.get("--sched") ?? "fcfs";
+    if (!["fcfs", "sjf", "rr"].includes(sched)) {
+        throw new Error("--sched deve ser fcfs, sjf ou rr");
+    }
 
+    const subst = valores.get("--subst") ?? "fifo";
+    if (!["fifo", "lru"].includes(subst)) {
+        throw new Error("--subst deve ser fifo ou lru");
+    }
 
-// const cpu = new CPU();
+    return {
+        arquivo,
+        cpus,
+        sched: sched as Escalonador,
+        quantum: inteiro("--quantum", 2, 1),
+        subst: subst as "fifo" | "lru",
+        quadros: inteiro("--quadros", 256, 1),
+        custoTroca: inteiro("--custo-troca", 1, 0),
+        fault: inteiro("--fault", 20, 1),
+        saida: valores.get("--saida") ?? "resultados",
+        log
+    };
+}
 
-// for (const p of processos) {
-//     await cpu.execute(p);
-// }
+function lerProcessos(arquivo: string): Processo[] {
+    return JSON.parse(readFileSync(arquivo, "utf8")) as Processo[];
+}
 
+function salvarResultados(
+    opcoes: ReturnType<typeof lerArgumentos>,
+    metricas: ReturnType<SO["execute"]>,
+    ganttCSV: string
+) {
+    const cenario = parse(opcoes.arquivo).name;
+    const nome = `${cenario}_${opcoes.cpus}cpu_${opcoes.sched}`
+        + (opcoes.sched === "rr" ? `_q${opcoes.quantum}` : "")
+        + `_${opcoes.subst}_${opcoes.quadros}quadros_t${opcoes.custoTroca}_f${opcoes.fault}`;
+    const pasta = join(opcoes.saida, nome);
+    mkdirSync(pasta, { recursive: true });
 
-/*
+    const parametros = {
+        cenario,
+        cpus: opcoes.cpus,
+        escalonador: opcoes.sched,
+        quantum: opcoes.sched === "rr" ? opcoes.quantum : null,
+        substituicao: opcoes.subst,
+        quadros: opcoes.quadros,
+        custoTroca: opcoes.custoTroca,
+        fault: opcoes.fault
+    };
 
-const ram = new MemoriaRAM(256, "fifo");
+    writeFileSync(join(pasta, "metricas.json"),
+        JSON.stringify({ parametros, ...metricas }, null, 2), "utf8");
 
-console.log(ram.acessar(1, 0)); // page_fault
-console.log(ram.acessar(1, 0)); // hit
-console.log(ram.acessar(2, 3)); // page_fault
-console.log(ram.acessar(2, 3)); // hit
+    const { cpus, ...globais } = metricas;
+    const soma = (campo: "tempoUtil" | "tempoTroca" | "tempoOcioso") =>
+        cpus.reduce((total, cpu) => total + cpu[campo], 0);
 
-console.log(ram.visualizar());
+    const registroCSV = {
+        ...parametros,
+        ...globais,
+        tempoUtilTotal: soma("tempoUtil"),
+        tempoTrocaTotal: soma("tempoTroca"),
+        tempoOciosoTotal: soma("tempoOcioso"),
+        utilizacaoMedia: cpus.reduce((total, cpu) => total + cpu.utilizacao, 0) / cpus.length
+    };
+    const campos = Object.keys(registroCSV);
+    const escapar = (valor: unknown) => {
+        const texto = valor == null ? "" : String(valor);
+        return /[,"\n]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+    };
+    const csv = campos.join(",") + "\n"
+        + Object.values(registroCSV).map(escapar).join(",") + "\n";
+    writeFileSync(join(pasta, "metricas.csv"), csv, "utf8");
+    writeFileSync(join(pasta, "gantt.csv"), ganttCSV, "utf8");
 
-// Quando P1 terminar:
-ram.liberar(1);
+    console.log(`Arquivos salvos em: ${pasta}`);
+}
 
-*/
+try {
+    const opcoes = lerArgumentos(process.argv.slice(2));
+    const carga = lerProcessos(opcoes.arquivo);
+
+    console.log(`Carregados ${carga.length} processos de ${opcoes.arquivo}`);
+    console.log(`CPUs=${opcoes.cpus} sched=${opcoes.sched} Q=${opcoes.quantum} RAM=${opcoes.quadros} subst=${opcoes.subst} custoTroca=${opcoes.custoTroca} fault=${opcoes.fault}`);
+
+    const so = new SO(
+        opcoes.cpus,
+        opcoes.custoTroca,
+        opcoes.sched,
+        opcoes.quantum,
+        carga,
+        opcoes.quadros,
+        opcoes.subst,
+        opcoes.fault,
+        opcoes.log
+    );
+    const metricas = so.execute();
+    salvarResultados(opcoes, metricas, so.gerarGanttCSV());
+} catch (erro) {
+    console.error(erro instanceof Error ? erro.message : erro);
+    process.exitCode = 1;
+}

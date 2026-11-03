@@ -1,2 +1,10 @@
 node_modules
 dist
+
+resultados
+resultados.*
+logs.txt
+
+simulador.exe
+
+*.sh

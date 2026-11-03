@@ -1,0 +1,99 @@
+# Execute no diretorio raiz do projeto trabalho-m2.
+# Cenários obrigatorios: cenario_A_t0.json e cenario_B_espacadas.json.
+# 20 bases LRU + 8 quantums adicionais + 4 FIFO.
+
+# 01 | cenario_A_t0 | 1 CPU | FCFS | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched fcfs --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 02 | cenario_A_t0 | 1 CPU | SJF | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched sjf --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 03 | cenario_A_t0 | 1 CPU | RR Q=2 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched rr --quantum 2 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 04 | cenario_A_t0 | 1 CPU | RR Q=10 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched rr --quantum 10 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 05 | cenario_A_t0 | 1 CPU | RR Q=50 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched rr --quantum 50 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 06 | cenario_A_t0 | 4 CPU | FCFS | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched fcfs --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 07 | cenario_A_t0 | 4 CPU | SJF | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched sjf --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 08 | cenario_A_t0 | 4 CPU | RR Q=2 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched rr --quantum 2 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 09 | cenario_A_t0 | 4 CPU | RR Q=10 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched rr --quantum 10 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 10 | cenario_A_t0 | 4 CPU | RR Q=50 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched rr --quantum 50 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 11 | cenario_B_espacadas | 1 CPU | FCFS | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched fcfs --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 12 | cenario_B_espacadas | 1 CPU | SJF | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched sjf --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 13 | cenario_B_espacadas | 1 CPU | RR Q=2 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched rr --quantum 2 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 14 | cenario_B_espacadas | 1 CPU | RR Q=10 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched rr --quantum 10 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 15 | cenario_B_espacadas | 1 CPU | RR Q=50 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched rr --quantum 50 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 16 | cenario_B_espacadas | 4 CPU | FCFS | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched fcfs --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 17 | cenario_B_espacadas | 4 CPU | SJF | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched sjf --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 18 | cenario_B_espacadas | 4 CPU | RR Q=2 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --quantum 2 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 19 | cenario_B_espacadas | 4 CPU | RR Q=10 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --quantum 10 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 20 | cenario_B_espacadas | 4 CPU | RR Q=50 | LRU | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --quantum 50 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 21 | cenario_A_t0 | 1 CPU | RR Q=5 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched rr --quantum 5 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 22 | cenario_A_t0 | 1 CPU | RR Q=20 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched rr --quantum 20 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 23 | cenario_A_t0 | 4 CPU | RR Q=5 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched rr --quantum 5 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 24 | cenario_A_t0 | 4 CPU | RR Q=20 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched rr --quantum 20 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 25 | cenario_B_espacadas | 1 CPU | RR Q=5 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched rr --quantum 5 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 26 | cenario_B_espacadas | 1 CPU | RR Q=20 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched rr --quantum 20 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 27 | cenario_B_espacadas | 4 CPU | RR Q=5 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --quantum 5 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 28 | cenario_B_espacadas | 4 CPU | RR Q=20 | LRU | extra
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched rr --quantum 20 --subst lru --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 29 | cenario_A_t0 | 1 CPU | FCFS | FIFO | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 1 --sched fcfs --subst fifo --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 30 | cenario_A_t0 | 4 CPU | FCFS | FIFO | minimo
+npx tsx src/index.ts --arquivo ./cenario_A_t0.json --cpus 4 --sched fcfs --subst fifo --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 31 | cenario_B_espacadas | 1 CPU | FCFS | FIFO | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 1 --sched fcfs --subst fifo --quadros 256 --custo-troca 1 --fault 20 --saida resultados
+
+# 32 | cenario_B_espacadas | 4 CPU | FCFS | FIFO | minimo
+npx tsx src/index.ts --arquivo ./cenario_B_espacadas.json --cpus 4 --sched fcfs --subst fifo --quadros 256 --custo-troca 1 --fault 20 --saida resultados
